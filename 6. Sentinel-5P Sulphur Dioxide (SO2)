@@ -1,0 +1,96 @@
+// Define area of interest (draw a polygon or import as FeatureCollection)
+var geometry = table;  // Replace 'table' with your shapefile or drawn AOI
+
+// Load Sentinel-5P Sulphur Dioxide (SO2) data
+var SO2 = ee.ImageCollection("COPERNICUS/S5P/OFFL/L3_SO2")
+  .filterBounds(geometry)
+  .filterDate('2024-01-01', '2024-12-31')
+  .select('SO2_column_number_density');
+
+// Reduce to mean image and clip to AOI
+var so2_mean = SO2.mean().clip(geometry);
+
+// Visualization parameters
+var band_viz = {
+  min: 0,
+  max: 0.0005,
+  palette: ['347bba', '0000ff', '#fff564', '#ff300c']
+};
+
+// Center map and add SO2 layer
+Map.centerObject(geometry, 12);
+Map.addLayer(so2_mean, band_viz, 'SO2 Mean');
+
+// Style the boundary with black color and width 5
+var styledBoundary = geometry.style({
+  color: 'black',
+  fillColor: '00000000', // Transparent fill
+  width: 5
+});
+Map.addLayer(styledBoundary, {}, 'Black Boundary');
+
+// ----------- Custom Legend Panel -------------
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px',
+    backgroundColor: 'white',
+    width: '300px'
+  }
+});
+
+// Title
+legend.add(ui.Label({
+  value: 'Sentinel-5P (SO₂) Data Range (2024):',
+  style: {fontWeight: 'bold', fontSize: '14px', margin: '0 0 6px 0'}
+}));
+
+// Helper function to add legend rows
+function addLegendRow(color, value, interpretation) {
+  var row = ui.Panel({
+    layout: ui.Panel.Layout.flow('horizontal'),
+    style: {margin: '4px 0'}
+  });
+
+  var colorBox = ui.Label('', {
+    backgroundColor: color,
+    padding: '10px',
+    margin: '0 10px 0 0',
+    border: '1px solid #000',
+    width: '30px'
+  });
+
+  var valueLabel = ui.Label({
+    value: value,
+    style: {width: '90px'}
+  });
+
+  var interpLabel = ui.Label({
+    value: interpretation,
+    style: {stretch: 'horizontal'}
+  });
+
+  row.add(colorBox);
+  row.add(valueLabel);
+  row.add(interpLabel);
+  legend.add(row);
+}
+
+// Add legend entries
+addLegendRow('#347bba', '~0.00001', 'Very low / clean air');
+addLegendRow('#0000ff', '~0.0001', 'Background levels');
+addLegendRow('#fff564', '~0.0003', 'Moderate pollution');
+addLegendRow('#ff300c', '> 0.0004', 'High pollution');
+
+Map.add(legend);
+
+// ----------- Export -----------
+Export.image.toDrive({
+  image: so2_mean,
+  description: 'SO2_Sentinel5P_Export',
+  scale: 1000,
+  region: geometry,
+  maxPixels: 1e13,
+  fileFormat: 'GeoTIFF'
+});
+
