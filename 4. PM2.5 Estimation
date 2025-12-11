@@ -1,0 +1,183 @@
+// PM2.5 Estimation from MODIS AOD (2024)
+// Location: Papua New Guinea
+
+// Load region of interest (Hela Province)
+var countries = ee.FeatureCollection('projects/fresh-century-432117-j1/assets/gadm41_PNG_1_Provincal_level');
+var roi = countries.filter(ee.Filter.eq('NAME_1','Hela'));
+
+// Style and add boundary
+var roiStyle = roi.style({
+  color: 'black',
+  fillColor: '00000000',
+  width: 3
+});
+Map.addLayer(roiStyle, {}, 'Hela Boundary');
+
+// Load MODIS AOD dataset for 2024
+var AOD = ee.ImageCollection("MODIS/061/MCD19A2_GRANULES")
+            .filterDate('2024-01-01', '2024-12-31')
+            .select('Optical_Depth_047');
+
+// Convert AOD to PM2.5 using empirical formula
+var PM2_5 = function(img) {
+  return img.multiply(0.001).multiply(271.34).add(22.24)
+            .copyProperties(img, ['system:time_start']);
+};
+var PM = AOD.map(PM2_5);
+
+// Create mean PM2.5 composite and clip to ROI
+var c = PM.reduce(ee.Reducer.mean()).clip(roi);
+
+// Visualization parameters for PM2.5
+var band_viz = {
+  min: 0,
+  max: 110,
+  palette: ['black', 'blue', 'purple', 'cyan', 'green', 'yellow', 'red']
+};
+Map.addLayer(c, band_viz, 'PM2.5 Mean Jan–Dec 2024');
+Map.centerObject(roi, 8);
+
+// Classification of PM2.5 based on AQI thresholds
+var PM_Class = ee.Image(1)
+  .where(c.gte(0).and(c.lte(50)), 2)
+  .where(c.gt(50).and(c.lte(100)), 3)
+  .where(c.gt(100).and(c.lte(150)), 4)
+  .where(c.gt(150).and(c.lte(200)), 5)
+  .where(c.gt(200).and(c.lte(300)), 6)
+  .where(c.gt(300), 7);
+var Class = PM_Class.clip(roi);
+
+// Add classified PM2.5 with correct palette matching the legend
+Map.addLayer(Class, {
+  min: 2,
+  max: 7,
+  palette: ['17d145', 'f9ff59', 'f99b6b', 'f32911', 'c90b50', '8e2532']
+}, 'PM2.5 Classified (Legend Matched)');
+
+// Create legend
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-right',
+    padding: '8px 15px'
+  }
+});
+legend.add(ui.Label({
+  value: 'Air Quality Index Levels (PM2.5)',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '18px',
+    margin: '0 0 4px 0',
+    padding: '0'
+  }
+}));
+var makeRow = function(color, name) {
+  var colorBox = ui.Label({
+    style: {
+      backgroundColor: '#' + color,
+      padding: '8px',
+      margin: '0 0 4px 0'
+    }
+  });
+  var description = ui.Label({
+    value: name,
+    style: {margin: '0 0 4px 6px'}
+  });
+  return ui.Panel({
+    widgets: [colorBox, description],
+    layout: ui.Panel.Layout.Flow('horizontal')
+  });
+};
+var palette = ['17d145', 'f9ff59', 'f99b6b', 'f32911', 'c90b50', '8e2532'];
+var names = [
+  'Good (0–30)', 
+  'Moderate (31–60)', 
+  'Unhealthy for Sensitive Groups (61–90)',
+  'Unhealthy (91-120)', 
+  'Very Unhealthy (120–250)', 
+  'Hazardous (301+)'
+];
+for (var i = 0; i < palette.length; i++) {
+  legend.add(makeRow(palette[i], names[i]));
+}
+Map.add(legend);
+
+// Map title
+var labelPanel = ui.Panel({
+  widgets: [
+    ui.Label({
+      value: 'Particulate Matter 2.5 (PM2.5) Map of Hela, 2024',
+      style: {
+        fontWeight: 'bold',
+        fontSize: '20px',
+        textAlign: 'center'
+      }
+    })
+  ],
+  style: {
+    position: 'top-center',
+    padding: '25px',
+    backgroundColor: 'white'
+  }
+});
+Map.add(labelPanel);
+
+// Export final PM2.5 mean raster
+Export.image.toDrive({
+  image: c,
+  description: 'PM25_PapuaNewGuinea_2024',
+  folder: 'EarthEngineExports',
+  fileNamePrefix: 'PM25_PNG_2024',
+  region: roi,
+  scale: 1000,
+  maxPixels: 1e13
+});
+
+// Monthly chart panel
+var months = ee.List.sequence(1, 12);
+var monthlyPM = ee.ImageCollection.fromImages(
+  months.map(function(m) {
+    var monthly = PM
+      .filter(ee.Filter.calendarRange(m, m, 'month'))
+      .mean()
+      .set('month', m);
+    return monthly;
+  })
+);
+var chart = ui.Chart.image.series({
+  imageCollection: monthlyPM,
+  region: roi,
+  reducer: ee.Reducer.mean(),
+  scale: 5000,
+  xProperty: 'month'
+}).setChartType('ColumnChart')
+.setOptions({
+  title: '📊 *Monthly Mean PM2.5 in Hela Province (2024)*',
+  titleTextStyle: {
+    fontSize: 16,
+    bold: true,
+    italic: true
+  },
+  hAxis: {
+    title: 'Month',
+    titleTextStyle: {bold: true, italic: true},
+    format: '#',
+    gridlines: {count: 12}
+  },
+  vAxis: {
+    title: 'PM2.5 (µg/m³)',
+    titleTextStyle: {bold: true, italic: true},
+    viewWindow: {min: 0, max: 100}
+  },
+  colors: ['#ff0000']
+});
+var chartPanel = ui.Panel({
+  widgets: [chart],
+  style: {
+    position: 'bottom-left',
+    width: '480px',
+    height: '350px',
+    backgroundColor: 'white',
+    padding: '10px'
+  }
+});
+Map.add(chartPanel);
